@@ -191,6 +191,7 @@ mod tests {
         regs: [u8; 256],
         pointer: u8,
         first_byte: bool,
+
     }
 
     impl MockEeprom {
@@ -200,6 +201,7 @@ mod tests {
                 regs: [0xFF; 256],
                 pointer: 0,
                 first_byte: true,
+
             }
         }
     }
@@ -231,6 +233,7 @@ mod tests {
             let val = self.regs[self.pointer as usize];
             self.pointer = self.pointer.wrapping_add(1);
             val
+
         }
     }
 
@@ -258,6 +261,7 @@ mod tests {
         // Read back 1 byte
         let data = bus.transfer_read(0x50, 1);
         assert_eq!(data, Some(vec![0xDE]), "read back must match written value");
+
     }
 
     #[test]
