@@ -45,6 +45,7 @@ riscv64-unknown-elf-gcc --version
 # Rust toolchain (required for Rust experiment and build)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 . "$HOME/.cargo/env"
+
 cargo install bindgen-cli
 ```
 
@@ -53,6 +54,12 @@ cargo install bindgen-cli
 ```bash
 make -f Makefile.camp configure
 ```
+
+This runs `./configure` with unified flags for all experiments:
+- `--target-list=riscv64-softmmu,riscv64-linux-user`
+- `--extra-cflags='-O0 -g3'`
+- `--cross-prefix-riscv64=riscv64-unknown-elf-`
+- `--enable-rust`
 
 ### 3. Build
 
@@ -122,6 +129,7 @@ Implement I2C bus, GPIO I2C controller, and SPI controller in Rust for the G233 
 - Tests: `tests/gevico/qtest/test-i2c-*.c`, `tests/gevico/qtest/test-spi-rust-*.c`
 - Run: `make -f Makefile.camp test-rust`
 - Docs: [Experiment Manual](https://qemu.gevico.online/exercise/2026/stage1/rust/rust-exper-manual/) | [Rust Programming Guide](https://qemu.gevico.online/exercise/2026/stage1/rust/rust-lang-manual/)
+
 
 ## Available Make Targets
 
