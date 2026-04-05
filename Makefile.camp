@@ -33,9 +33,9 @@ CONFIGURE_FLAGS := \
 NPROC := $(shell nproc 2>/dev/null || echo 4)
 JOBS  ?= $(NPROC)
 
+
 # Use QEMU's bundled meson from pyvenv to avoid version mismatch
 MESON = $(BUILD_DIR)/pyvenv/bin/meson
-
 # ─── Default target ──────────────────────────────────────────────────
 
 .PHONY: help
