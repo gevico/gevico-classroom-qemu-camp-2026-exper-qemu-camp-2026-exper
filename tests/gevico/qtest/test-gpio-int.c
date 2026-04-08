@@ -20,8 +20,13 @@
 #define GPIO_TRIG   (GPIO_BASE + 0x14)
 #define GPIO_POL    (GPIO_BASE + 0x18)
 
-#define PLIC_BASE       0x0C000000ULL
-#define PLIC_PENDING    (PLIC_BASE + 0x1000)
+#define PLIC_BASE           0x0C000000ULL
+#define PLIC_PRIORITY       (PLIC_BASE + 0x000000)
+#define PLIC_PENDING        (PLIC_BASE + 0x001000)
+#define PLIC_ENABLE         (PLIC_BASE + 0x002000)  /* context 0 (hart 0 M) */
+#define PLIC_CONTEXT        (PLIC_BASE + 0x200000)  /* context 0 */
+#define PLIC_THRESHOLD      (PLIC_CONTEXT + 0x0)
+#define PLIC_CLAIM          (PLIC_CONTEXT + 0x4)
 
 #define GPIO_PLIC_IRQ   2
 
@@ -114,10 +119,21 @@ static void test_gpio_ie_mask(void)
     qtest_quit(qts);
 }
 
-/* GPIO interrupt should appear on PLIC IRQ 2 */
+/*
+ * GPIO interrupt should appear on PLIC IRQ 2.
+ *
+ * The RISC-V PLIC pending bit is sticky: lowering the IRQ line does not
+ * clear it. Software clears pending by reading the claim register and then
+ * writing the same IRQ number back as completion.
+ */
 static void test_gpio_plic(void)
 {
     QTestState *qts = qtest_init("-machine g233 -m 2G");
+
+    /* PLIC init: enable IRQ 2 at context 0 with non-zero priority */
+    qtest_writel(qts, PLIC_PRIORITY + GPIO_PLIC_IRQ * 4, 1);
+    qtest_writel(qts, PLIC_THRESHOLD, 0);
+    qtest_writel(qts, PLIC_ENABLE, 1u << GPIO_PLIC_IRQ);
 
     qtest_writel(qts, GPIO_DIR,  0x1);
     qtest_writel(qts, GPIO_TRIG, 0x0);
@@ -129,8 +145,18 @@ static void test_gpio_plic(void)
 
     g_assert_true(plic_irq_pending(qts, GPIO_PLIC_IRQ));
 
-    /* Clear and verify PLIC pending clears */
+    /* Clear the GPIO-side interrupt status first */
     qtest_writel(qts, GPIO_IS, 0x1);
+
+    /* Claim the interrupt on the PLIC: read returns the IRQ id and clears
+     * the pending bit. */
+    uint32_t claimed = qtest_readl(qts, PLIC_CLAIM);
+    g_assert_cmpuint(claimed, ==, GPIO_PLIC_IRQ);
+
+    /* Complete: write the IRQ id back to the claim register */
+    qtest_writel(qts, PLIC_CLAIM, GPIO_PLIC_IRQ);
+
+    /* Pending bit must now be cleared */
     g_assert_false(plic_irq_pending(qts, GPIO_PLIC_IRQ));
 
     qtest_quit(qts);
