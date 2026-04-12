@@ -1,0 +1,31 @@
+#
+# RISC-V translation routines for the G233 AI custom extension
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# All current instructions use:
+#   - custom-3 major opcode 0x7b (binary 1111011)
+#   - funct3 = 6
+#   - funct7 selects the operation
+#
+# Operand convention in the current software tests:
+#   - memory-side-effect instructions reuse the rd field as an input register
+#   - reduction instructions use rd as a true scalar destination register
+#
+
+%rs2       20:5
+%rs1       15:5
+%rd        7:5
+
+@r_g233ai  ....... ..... ..... ... ..... ....... %rs2 %rs1 %rd
+
+dma        0000110 ..... ..... 110 ..... 1111011 @r_g233ai
+gemm       0001110 ..... ..... 110 ..... 1111011 @r_g233ai
+sort       0010110 ..... ..... 110 ..... 1111011 @r_g233ai
+vadd       0011110 ..... ..... 110 ..... 1111011 @r_g233ai
+crush      0100110 ..... ..... 110 ..... 1111011 @r_g233ai
+expand     0110110 ..... ..... 110 ..... 1111011 @r_g233ai
+vdot       1000110 ..... ..... 110 ..... 1111011 @r_g233ai
+vrelu      1010110 ..... ..... 110 ..... 1111011 @r_g233ai
+vscale     1100110 ..... ..... 110 ..... 1111011 @r_g233ai
+vmax       1110110 ..... ..... 110 ..... 1111011 @r_g233ai

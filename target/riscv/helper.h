@@ -121,6 +121,24 @@ DEF_HELPER_2(cbo_clean_flush, void, env, tl)
 DEF_HELPER_2(cbo_inval, void, env, tl)
 DEF_HELPER_2(cbo_zero, void, env, tl)
 
+/*
+ * G233 AI custom helpers.
+ *
+ * The current tests use memory-side-effect instructions for bulk/vector
+ * operations and scalar-return instructions for reductions.  Helpers take
+ * guest addresses and scalar parameters exactly as delivered by translation.
+ */
+DEF_HELPER_4(xg233_dma, void, env, tl, tl, tl)
+DEF_HELPER_4(xg233_gemm, void, env, tl, tl, tl)
+DEF_HELPER_4(xg233_sort, void, env, tl, tl, tl)
+DEF_HELPER_4(xg233_vadd, void, env, tl, tl, tl)
+DEF_HELPER_4(xg233_crush, void, env, tl, tl, tl)
+DEF_HELPER_4(xg233_expand, void, env, tl, tl, tl)
+DEF_HELPER_3(xg233_vdot, tl, env, tl, tl)
+DEF_HELPER_4(xg233_vrelu, void, env, tl, tl, tl)
+DEF_HELPER_4(xg233_vscale, void, env, tl, tl, tl)
+DEF_HELPER_3(xg233_vmax, tl, env, tl, tl)
+
 /* Special functions */
 DEF_HELPER_2(csrr, tl, env, int)
 DEF_HELPER_3(csrw, void, env, int, tl)

@@ -1211,8 +1211,10 @@ static uint32_t opcode_at(DisasContextBase *dcbase, target_ulong pc)
 #include "insn_trans/trans_privileged.c.inc"
 #include "insn_trans/trans_svinval.c.inc"
 #include "insn_trans/trans_rvbf16.c.inc"
+#include "decode-xg233.c.inc"
 #include "decode-xthead.c.inc"
 #include "decode-xmips.c.inc"
+#include "insn_trans/trans_xg233.c.inc"
 #include "insn_trans/trans_xthead.c.inc"
 #include "insn_trans/trans_xventanacondops.c.inc"
 #include "insn_trans/trans_xmips.c.inc"
@@ -1232,6 +1234,7 @@ static uint32_t opcode_at(DisasContextBase *dcbase, target_ulong pc)
 
 const RISCVDecoder decoder_table[] = {
     { always_true_p, decode_insn32 },
+    { has_xg233ai_p, decode_xg233},
     { has_xmips_p, decode_xmips},
     { has_xthead_p, decode_xthead},
     { has_XVentanaCondOps_p, decode_XVentanaCodeOps},

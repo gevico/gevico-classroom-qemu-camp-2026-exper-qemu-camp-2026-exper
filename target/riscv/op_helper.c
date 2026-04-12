@@ -281,6 +281,419 @@ void helper_cbo_inval(CPURISCVState *env, target_ulong address)
     /* We don't emulate the cache-hierarchy, so we're done. */
 }
 
+/*
+ * G233 AI custom helpers.
+ *
+ * These are intentionally left as skeletons: decode and helper call plumbing
+ * is in place, while the actual algorithms are left for incremental
+ * implementation.  The comments under each helper describe the exact contract
+ * exercised by the current TCG tests.
+ */
+
+/*
+ * Small utility layer for the custom helpers.
+ *
+ * The translation phase passes guest virtual addresses into helpers.  Inside
+ * helpers you should use QEMU's cpu load/store accessors together with GETPC()
+ * so that faults are attributed to the current guest instruction.
+ * insn-dma
+    insn-sort
+    insn-crush
+    insn-expand
+    insn-vdot
+    insn-vrelu
+    insn-vscale
+    insn-vmax
+    insn-gemm
+    insn-vadd
+ */
+static inline uint8_t xg233_ld_u8(CPURISCVState *env, target_ulong addr,
+                                  uintptr_t ra)
+{
+    return cpu_ldub_data_ra(env, addr, ra);
+}
+
+static inline void xg233_st_u8(CPURISCVState *env, target_ulong addr,
+                               uint8_t value, uintptr_t ra)
+{
+    cpu_stb_data_ra(env, addr, value, ra);
+}
+
+static inline int32_t xg233_ld_i32(CPURISCVState *env, target_ulong addr,
+                                   uintptr_t ra)
+{
+    return (int32_t)cpu_ldl_data_ra(env, addr, ra);
+}
+
+static inline void xg233_st_i32(CPURISCVState *env, target_ulong addr,
+                                int32_t value, uintptr_t ra)
+{
+    cpu_stl_data_ra(env, addr, value, ra);
+}
+
+static inline target_ulong xg233_elem_addr(target_ulong base, target_ulong index,
+                                           target_ulong elem_size)
+{
+    return base + index * elem_size;
+}
+
+void helper_xg233_dma(CPURISCVState *env, target_ulong dst,
+                      target_ulong src, target_ulong grain)
+{
+    /*
+     * test-insn-dma.c
+     *   dst   : guest pointer to FP32 destination matrix
+     *   src   : guest pointer to FP32 source matrix
+     *   grain : 0 -> 8x8, 1 -> 16x16, 2 -> 32x32 transpose
+     */
+    uintptr_t ra = GETPC();
+
+    /*
+     * Suggested implementation outline:
+     *   1. decode grain -> matrix dimension n
+     *   2. nested loop over i/j
+     *   3. load one 32-bit lane from src
+     *   4. store it to dst in transposed position
+     *
+     * Since the test compares raw FP32 bit patterns, treating elements as
+     * opaque 32-bit words is enough.
+     */
+
+    //  identifine the grain 
+    int shape_line = 0;
+    int shape_count = 0;
+    switch (grain)
+    {
+    case 0:
+    shape_line = 8,shape_count=8;    
+    break;
+    case 1:
+    shape_line=16,shape_count=16;
+    break;
+    case 2:
+    shape_line=32,shape_count=32;
+    break;
+    default:
+        break;
+    }
+    // invalid input
+    if (!shape_count || !shape_count)
+    {
+        return;
+    }
+    
+    //  transpose src matrix
+    for (int i = 0; i < shape_line; i++)
+    {
+        for (int j = 0; j < shape_count; j++)
+        {
+            target_ulong dst_addr = dst + (j*shape_line+i)*sizeof(int32_t);
+            target_ulong source_addr = src + (i*shape_line+j)*sizeof(int32_t);
+            int32_t value = xg233_ld_i32(env,source_addr,ra);
+            xg233_st_i32(env,dst_addr,value,ra);
+        }
+        
+    }
+    
+
+    return;
+}
+
+void helper_xg233_gemm(CPURISCVState *env, target_ulong dst,
+                       target_ulong lhs, target_ulong rhs)
+{
+    /*
+     * test-insn-gemm.c
+     *   dst : guest pointer to INT32 4x4 result matrix
+     *   lhs : guest pointer to INT32 4x4 matrix A
+     *   rhs : guest pointer to INT32 4x4 matrix B
+     */
+    uintptr_t ra = GETPC();
+
+    /*
+     * Suggested implementation outline:
+     *   for i in [0, 4)
+     *     for j in [0, 4)
+     *       acc = 0
+     *       for k in [0, 4)
+     *         acc += A[i][k] * B[k][j]
+     *       store acc to C[i][j]
+     */
+    // shape of 4*4
+    int max_range = 4;
+    for (int i = 0; i < max_range; i++)
+    {
+        for (int j = 0; j < max_range; j++)
+        {
+            int32_t acc = 0;
+            for (int k = 0; k < max_range; k++)
+            {
+                target_ulong lhs_addr = xg233_elem_addr(lhs,i*max_range+k,sizeof(int32_t));
+                target_ulong rhs_addr = xg233_elem_addr(rhs,k*max_range+j,sizeof(int32_t));
+                int32_t a = xg233_ld_i32(env,lhs_addr,ra);
+                int32_t b = xg233_ld_i32(env,rhs_addr,ra);
+                acc += a * b;
+            }
+            target_ulong dst_addr = xg233_elem_addr(dst,i*max_range+j,sizeof(int32_t));
+            xg233_st_i32(env,dst_addr,acc,ra);
+        }
+    }
+    return;
+}
+
+void helper_xg233_sort(CPURISCVState *env, target_ulong k,
+                       target_ulong base, target_ulong n)
+{
+    /*
+     * test-insn-sort.c
+     *   k    : number of leading INT32 elements to sort
+     *   base : guest pointer to the INT32 array
+     *   n    : logical array length
+     */
+    uintptr_t ra = GETPC();
+
+    /*
+     * Only the first k elements participate in the sort; the tail up to n
+     * must remain untouched.
+     */
+    int sort_count = k;
+    // invalid input
+    if (sort_count > n || sort_count==0)
+    {
+        return;
+    }
+    
+    for (int i = 0; i < sort_count-1; i++)
+    {
+        for (int j = 0; j < sort_count-i-1; j++)
+        {
+            target_ulong pre_addr = base+j*sizeof(int);
+            target_ulong next_addr = base+(j+1)*sizeof(int);
+            int pre = xg233_ld_i32(env,pre_addr,ra);
+            int next = xg233_ld_i32(env,next_addr,ra);
+            if (pre > next)
+            {
+                // swap ele
+                xg233_st_i32(env,pre_addr,next,ra);
+                xg233_st_i32(env,next_addr,pre,ra);
+            }
+            
+        }
+        
+    }
+    
+
+    return;
+}
+
+void helper_xg233_vadd(CPURISCVState *env, target_ulong dst,
+                       target_ulong lhs, target_ulong rhs)
+{
+    /*
+     * test-insn-vadd.c
+     *   Element-wise INT32 add, fixed length 16.
+     *   Supports in-place destination aliasing.
+     */
+    uintptr_t ra = GETPC();
+
+    /*
+     * Suggested implementation outline:
+     *   for lane in [0, 16)
+     *     a = load lhs[lane]
+     *     b = load rhs[lane]
+     *     store (a + b) to dst[lane]
+     */
+    for (int lane = 0; lane < 16; lane++)
+    {
+        target_ulong lhs_addr = xg233_elem_addr(lhs,lane,sizeof(int32_t));
+        target_ulong rhs_addr = xg233_elem_addr(rhs,lane,sizeof(int32_t));
+        target_ulong dst_addr = xg233_elem_addr(dst,lane,sizeof(int32_t));
+        int32_t a = xg233_ld_i32(env,lhs_addr,ra);
+        int32_t b = xg233_ld_i32(env,rhs_addr,ra);
+        int32_t sum = a + b;
+        xg233_st_i32(env,dst_addr,sum,ra);
+    }
+return;
+}
+
+void helper_xg233_crush(CPURISCVState *env, target_ulong dst,
+                        target_ulong src, target_ulong n)
+{
+    /*
+     * test-insn-crush.c
+     *   Read n bytes from src, keep each byte's low 4 bits,
+     *   and pack two nibbles into one byte at dst.
+     */
+    uintptr_t ra = GETPC();
+
+    /*
+     * Output length is ceil(n / 2).  The low nibble comes from element 2*i,
+     * the high nibble comes from element 2*i+1.
+     */
+
+    // check n 
+    if(n==0){
+        return;
+    }
+
+
+    for (int i = 0; i < n/2; i++)
+    {
+        target_ulong src_addr = xg233_elem_addr(src,2*i,1);
+        target_ulong src_addr_2 = xg233_elem_addr(src,2*i+1,1);
+        target_ulong dst_addr = xg233_elem_addr(dst,i,1);
+
+        uint8_t low = xg233_ld_u8(env,src_addr,ra) & 0b1111;
+        uint8_t high = xg233_ld_u8(env,src_addr_2,ra)& 0b1111;
+        uint8_t ds = (uint8_t)0 |(( high << 4) | low);
+        xg233_st_u8(env,dst_addr,ds,ra); 
+    }
+
+    if (n & 1)
+    {
+        target_ulong src_addr = xg233_elem_addr(src,n-1,1);
+        uint8_t low = xg233_ld_u8(env,src_addr,ra) & 0b1111;
+        target_ulong dst_addr = xg233_elem_addr(dst,n/2,1);
+        uint8_t ds = (uint8_t)0 | low;
+        xg233_st_u8(env,dst_addr,ds,ra); 
+    }
+    
+    
+
+    return;
+}
+
+void helper_xg233_expand(CPURISCVState *env, target_ulong dst,
+                         target_ulong src, target_ulong n)
+{
+    /*
+     * test-insn-expand.c
+     *   Read n packed bytes from src and expand each byte into
+     *   two 4-bit values stored as separate bytes at dst.
+     */
+    uintptr_t ra = GETPC();
+
+    /*
+     * For each input byte:
+     *   dst[2*i]     = src[i] & 0x0f
+     *   dst[2*i + 1] = (src[i] >> 4) & 0x0f
+     */
+    for (int i = 0; i < n; i++)
+    {
+        target_ulong dst_addr = xg233_elem_addr(dst,2*i,1);
+        target_ulong dst_addr_2 = xg233_elem_addr(dst,2*i+1,1);
+        uint8_t src_val = xg233_ld_u8(env,xg233_elem_addr(src,i,1),ra);
+        xg233_st_u8(env,dst_addr,src_val & 0x0f,ra);
+        xg233_st_u8(env,dst_addr_2,(src_val >> 4) & 0x0f,ra);
+    }
+    
+return;
+}
+
+target_ulong helper_xg233_vdot(CPURISCVState *env, target_ulong lhs,
+                               target_ulong rhs)
+{
+    /*
+     * test-insn-vdot.c
+     *   Dot product of two fixed-length INT32 vectors (length 16).
+     *   Return value is XLEN-wide accumulation result.
+     */
+    uintptr_t ra = GETPC();
+
+    /*
+     * Accumulate in target_ulong or int64_t to match the rv64 test ABI.
+     */
+    int64_t acc = 0;
+    for (int i = 0; i < 16; i++)
+    {
+        target_ulong lhs_addr = xg233_elem_addr(lhs,i,sizeof(int32_t));
+        target_ulong rhs_addr = xg233_elem_addr(rhs,i,sizeof(int32_t));
+        int32_t a = xg233_ld_i32(env,lhs_addr,ra);
+        int32_t b = xg233_ld_i32(env,rhs_addr,ra);
+        acc += (int64_t)a * (int64_t)b;
+    }
+    
+    return (uint64_t)acc;
+}
+
+void helper_xg233_vrelu(CPURISCVState *env, target_ulong dst,
+                        target_ulong src, target_ulong n)
+{
+    /*
+     * test-insn-vrelu.c
+     *   Apply ReLU to n INT32 elements from src and write to dst.
+     *   Supports in-place destination aliasing.
+     */
+    uintptr_t ra = GETPC();
+
+    /*
+     * dst[i] = max(src[i], 0)
+     */
+    for (int i = 0; i < n; i++)
+    {
+        target_ulong src_addr = xg233_elem_addr(src,i,sizeof(int32_t));
+        target_ulong dst_addr = xg233_elem_addr(dst,i,sizeof(int32_t));
+        int32_t val = xg233_ld_i32(env,src_addr,ra);
+        int32_t relu = val > 0 ? val : 0;
+        xg233_st_i32(env,dst_addr,relu,ra);
+    }
+    
+    return;
+}
+
+void helper_xg233_vscale(CPURISCVState *env, target_ulong dst,
+                         target_ulong src, target_ulong scale)
+{
+    /*
+     * test-insn-vscale.c
+     *   Multiply a fixed-length INT32 vector (length 16) by a scalar.
+     */
+    uintptr_t ra = GETPC();
+
+    /*
+     * scale is passed in rs2 as an XLEN scalar; each element is INT32.
+     */
+    for (int i = 0; i < 16; i++)
+    {
+        target_ulong src_addr = xg233_elem_addr(src,i,sizeof(int32_t));
+        target_ulong dst_addr = xg233_elem_addr(dst,i,sizeof(int32_t));
+        int32_t val = xg233_ld_i32(env,src_addr,ra);
+        int32_t scaled = val * (int32_t)scale;
+        xg233_st_i32(env,dst_addr,scaled,ra);
+    }
+    
+    return;
+}
+
+target_ulong helper_xg233_vmax(CPURISCVState *env, target_ulong src,
+                               target_ulong n)
+{
+    /*
+     * test-insn-vmax.c
+     *   Reduction max over n INT32 elements.
+     *   Return value must be sign-extended to XLEN.
+     */
+    uintptr_t ra = GETPC();
+
+    /*
+     * Load INT32 elements, compare in signed domain, then cast the final
+     * answer back through int32_t so rv64 sign-extension is preserved.
+     */
+    int32_t vmax = INT32_MIN;
+    for (int i = 0; i < n; i++)
+    {
+        target_ulong src_addr = xg233_elem_addr(src,i,sizeof(int32_t));
+        int32_t val = xg233_ld_i32(env,src_addr,ra);
+        if (val > vmax)
+        {
+            vmax = val;
+        } 
+    }
+    
+    
+    return (int32_t)vmax;
+}
+
 #ifndef CONFIG_USER_ONLY
 
 target_ulong helper_sret(CPURISCVState *env)
