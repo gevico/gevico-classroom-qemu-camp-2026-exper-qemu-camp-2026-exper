@@ -59,6 +59,8 @@
 #include "qapi/qapi-visit-common.h"
 #include "hw/virtio/virtio-iommu.h"
 #include "hw/uefi/var-service-api.h"
+#include "hw/gpio/g233_gpioctrl.h"
+#include "hw/spicontroller/spicontroller.h"
 
 /* KVM AIA only supports APLIC MSI. APLIC Wired is always emulated by QEMU. */
 static bool g233_use_kvm_aia_aplic_imsic(RISCVG233AIAType aia_type)
@@ -96,6 +98,8 @@ static const MemMapEntry virt_memmap[] = {
     [VIRT_UART0] =        { 0x10000000,         0x100 },
     [VIRT_VIRTIO] =       { 0x10001000,        0x1000 },
     [VIRT_FW_CFG] =       { 0x10100000,          0x18 },
+    [VIRT_SPICLTR]  =       { 0x10018000,         0x1000 }  , 
+    [VIRT_GPIOCTRL]  =       { 0x10012000,         0x1000 }  , 
     [VIRT_FLASH] =        { 0x20000000,     0x4000000 },
     [VIRT_IMSIC_M] =      { 0x24000000, VIRT_IMSIC_MAX_SIZE },
     [VIRT_IMSIC_S] =      { 0x28000000, VIRT_IMSIC_MAX_SIZE },
@@ -114,6 +118,95 @@ static const MemMapEntry virt_memmap[] = {
 static MemMapEntry virt_high_pcie_memmap;
 
 #define VIRT_FLASH_SECTOR_SIZE (256 * KiB)
+
+static void g233_gpioctrl_create(RISCVG233State *s)
+{
+    DeviceState *dev = qdev_new(TYPE_G233_GPIOCTRL);
+
+    /*
+     * Keep the GPIO controller as a board-owned child, just like other
+     * educational on-chip MMIO peripherals added to this machine model.
+     */
+    object_property_add_child(OBJECT(s), "gpioctrl", OBJECT(dev));
+    s->gpioctrl = dev;
+}
+
+static void g233_gpioctrl_realize(RISCVG233State *s, DeviceState *mmio_irqchip)
+{
+    SysBusDevice *sysbus = SYS_BUS_DEVICE(s->gpioctrl);
+
+    sysbus_realize(sysbus, &error_fatal);
+    sysbus_mmio_map(sysbus, 0, s->memmap[VIRT_GPIOCTRL].base);
+    sysbus_connect_irq(sysbus, 0, qdev_get_gpio_in(mmio_irqchip, GPIO_IRQ));
+}
+
+/*create SPI controller */
+static void g233_spi0_create(RISCVG233State *s)
+{
+    DeviceState *dev = qdev_new(TYPE_G233_SPI_CONTROLLER);
+
+    /*
+     * Board-level ownership:
+     * - machine decides this controller exists
+     * - device model decides its internal SPI/MMIO behavior
+     */
+    qdev_prop_set_uint32(dev, "num-cs", 2);
+    object_property_add_child(OBJECT(s), "spi0", OBJECT(dev));
+    s->spi0 = dev;
+}
+
+static void g233_spi0_flash_create(RISCVG233State *s)
+{
+    static const char *const flash_models[] = {
+        "w25x16",
+        "w25x32",
+    };
+    int i;
+
+    for (i = 0; i < ARRAY_SIZE(s->spi0_flash); i++) {
+        g_autofree char *name = g_strdup_printf("spi0-flash%d", i);
+        DeviceState *dev = qdev_new(flash_models[i]);
+
+        /*
+         * The SSI bus also tracks a logical CS index on each peripheral.
+         * We keep it aligned with the external CS line number exported by
+         * the SPI controller for easier reasoning.
+         */
+        qdev_prop_set_uint8(dev, "cs", i);
+        object_property_add_child(OBJECT(s), name, OBJECT(dev));
+        s->spi0_flash[i] = dev;
+    }
+}
+
+static void g233_spi0_realize(RISCVG233State *s, DeviceState *mmio_irqchip)
+{
+    SysBusDevice *sysbus = SYS_BUS_DEVICE(s->spi0);
+
+    sysbus_realize(sysbus, &error_fatal);
+    sysbus_mmio_map(sysbus, 0, s->memmap[VIRT_SPICLTR].base);
+    sysbus_connect_irq(sysbus, 0, qdev_get_gpio_in(mmio_irqchip, SPI0_IRQ));
+}
+
+static void g233_spi0_attach_flash(RISCVG233State *s)
+{
+    SSIBus *bus = (SSIBus *)qdev_get_child_bus(s->spi0, "spi");
+    int i;
+
+    g_assert(bus != NULL);
+
+    for (i = 0; i < ARRAY_SIZE(s->spi0_flash); i++) {
+        DeviceState *flash = s->spi0_flash[i];
+
+        ssi_realize_and_unref(flash, bus, &error_fatal);
+
+        /*
+         * SPI data flows over the shared SSI bus, but chip selection is an
+         * explicit GPIO sideband in QEMU. Each flash gets one CS input.
+         */
+        qdev_connect_gpio_out_named(s->spi0, "cs", i,
+            qdev_get_gpio_in_named(flash, SSI_GPIO_CS, 0));
+    }
+}
 
 static PFlashCFI01 *virt_flash_create1(RISCVG233State *s,
                                        const char *name,
@@ -962,6 +1055,42 @@ static void create_fdt_reset(RISCVG233State *s, uint32_t *phandle)
     g_free(name);
 }
 
+static void create_fdt_gpio(RISCVG233State *s,
+                            uint32_t irq_mmio_phandle,
+                            uint32_t *phandle)
+{
+    g_autofree char *name = NULL;
+    MachineState *ms = MACHINE(s);
+    uint32_t gpio_phandle = (*phandle)++;
+
+    name = g_strdup_printf("/soc/gpio@%"HWADDR_PRIx,
+                           s->memmap[VIRT_GPIOCTRL].base);
+    qemu_fdt_add_subnode(ms->fdt, name);
+    qemu_fdt_setprop_string(ms->fdt, name, "compatible",
+                            "gevico,g233-gpioctrl");
+    qemu_fdt_setprop_sized_cells(ms->fdt, name, "reg",
+                                 2, s->memmap[VIRT_GPIOCTRL].base,
+                                 2, s->memmap[VIRT_GPIOCTRL].size);
+    qemu_fdt_setprop_cell(ms->fdt, name, "phandle", gpio_phandle);
+    qemu_fdt_setprop_cell(ms->fdt, name, "#gpio-cells", 2);
+    qemu_fdt_setprop(ms->fdt, name, "gpio-controller", NULL, 0);
+    qemu_fdt_setprop_cell(ms->fdt, name, "ngpios", G233_GPIOCTRL_NUM_PINS);
+    qemu_fdt_setprop_cell(ms->fdt, name, "interrupt-parent",
+                          irq_mmio_phandle);
+    if (s->aia_type == G233_AIA_TYPE_NONE) {
+        qemu_fdt_setprop_cell(ms->fdt, name, "interrupts", GPIO_IRQ);
+    } else {
+        qemu_fdt_setprop_cells(ms->fdt, name, "interrupts", GPIO_IRQ, 0x4);
+    }
+
+    /*
+     * This controller currently exports one aggregated IRQ to the PLIC.
+     * We therefore describe it as a GPIO provider, but not yet as a
+     * per-pin interrupt-controller node.
+     */
+    qemu_fdt_setprop_string(ms->fdt, "/aliases", "gpio0", name);
+}
+
 static void create_fdt_uart(RISCVG233State *s,
                             uint32_t irq_mmio_phandle)
 {
@@ -1154,6 +1283,8 @@ static void finalize_fdt(RISCVG233State *s)
                     iommu_sys_phandle);
 
     create_fdt_reset(s, &phandle);
+
+    create_fdt_gpio(s, irq_mmio_phandle, &phandle);
 
     create_fdt_uart(s, irq_mmio_phandle);
 
@@ -1715,6 +1846,24 @@ static void virt_machine_init(MachineState *machine)
     sysbus_create_simple("goldfish_rtc", s->memmap[VIRT_RTC].base,
         qdev_get_gpio_in(mmio_irqchip, RTC_IRQ));
 
+    /*
+     * GPIO controller:
+     * - MMIO lives on the system bus at 0x10012000
+     * - one aggregated IRQ is routed to PLIC source 2
+     * - per-pin GPIO wires can later be connected to LEDs, keys, or other
+     *   board peripherals as the teaching model grows
+     */
+    g233_gpioctrl_realize(s, mmio_irqchip);
+
+    /*
+     * SPI controller:
+     * - MMIO lives on the system bus at 0x10018000
+     * - IRQ is routed into the board interrupt controller/PLIC input
+     * - flash chips are SSI peripherals hanging behind the controller
+     */
+    g233_spi0_realize(s, mmio_irqchip);
+    g233_spi0_attach_flash(s);
+
     for (i = 0; i < ARRAY_SIZE(s->flash); i++) {
         /* Map legacy -drive if=pflash to machine properties */
         pflash_cfi01_legacy_drive(s->flash[i],
@@ -1758,6 +1907,9 @@ static void virt_machine_instance_init(Object *obj)
     RISCVG233State *s = RISCV_G233_MACHINE(obj);
 
     virt_flash_create(s);
+    g233_gpioctrl_create(s);
+    g233_spi0_create(s);
+    g233_spi0_flash_create(s);
 
     s->oem_id = g_strndup(ACPI_BUILD_APPNAME6, 6);
     s->oem_table_id = g_strndup(ACPI_BUILD_APPNAME8, 8);

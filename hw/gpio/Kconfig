@@ -10,6 +10,9 @@ config GPIO_MPC8XXX
 config GPIO_PWR
     bool
 
+config G233_GPIOCTRL
+    bool
+
 config SIFIVE_GPIO
     bool
 

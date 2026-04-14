@@ -139,6 +139,7 @@ config GEVICO_G233
     bool
     default y
     depends on RISCV32 || RISCV64
+    select G233_GPIOCTRL
     select RISCV_ACLINT
     select SIFIVE_PLIC
     select SIFIVE_GPIO
