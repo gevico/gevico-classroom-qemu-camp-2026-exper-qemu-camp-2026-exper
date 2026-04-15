@@ -21,8 +21,8 @@
 #define WDT_CTRL    (WDT_BASE + 0x00)
 #define WDT_LOAD    (WDT_BASE + 0x04)
 #define WDT_VAL     (WDT_BASE + 0x08)
-#define WDT_KEY     (WDT_BASE + 0x0C)
-#define WDT_SR      (WDT_BASE + 0x10)
+#define WDT_KEY     (WDT_BASE + 0x10)
+#define WDT_SR      (WDT_BASE + 0x0C)
 
 #define WDT_CTRL_EN     (1u << 0)
 #define WDT_CTRL_INTEN  (1u << 1)
