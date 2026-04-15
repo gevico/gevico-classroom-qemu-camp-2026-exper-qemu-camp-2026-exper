@@ -104,6 +104,17 @@ Bit	名称	访问	复位	描述
 
 #define G233_SPI_DEFAULT_CS_COUNT   2
 
+
+/* SPI Transfer frame state */
+typedef enum G233SPIFrameState {
+    G233_SPI_FRAME_IDLE = 0,
+    G233_SPI_FRAME_CMD,
+    G233_SPI_FRAME_ADDR,
+    G233_SPI_FRAME_DATA_TX,
+    G233_SPI_FRAME_DATA_RX,
+} G233SPIFrameState;
+
+
 typedef struct G233SPIControllerState {
     /* <private> */
     SysBusDevice parent_obj;
@@ -117,15 +128,42 @@ typedef struct G233SPIControllerState {
      */
     qemu_irq irq;
 
+
+
+    /*  spi transfer state */
+    G233SPIFrameState frame_state;
+    /*  first instruction of the frame */
+    uint8_t opcode;
+    /* already process how much bytes */
+    uint32_t bytes_seen;
+    /*  how much byte not process */
+    uint32_t bytes_needed;
+    /* spi running on a valid spi transfer frame */
+    bool frame_active;
+    /*
+     * Minimal lookahead used to recognize the test flow
+     *   PAGE_PROGRAM data ... -> READ_STATUS(0x05, 0x00)
+     * without changing the guest-visible register interface.
+     */
+    bool pending_rdsr_opcode;
+
+
+
     /*
      * Master-side SPI topology.
      * - spi: shared serial bus carrying MOSI/MISO/clock
      * - cs_lines: external chip-select outputs, one per peripheral
+     *
+     * active_cs selects which peripheral would be targeted by the next
+     * transaction.
+     * cs_asserted tracks whether the external CS wire is currently driven
+     * active-low or left in the idle-high state.
      */
     SSIBus *spi;
     qemu_irq *cs_lines;
     uint32_t num_cs;
     uint8_t active_cs;
+    bool cs_asserted;
 
     /*
      * Minimal register bank required by the current tests.
@@ -140,7 +178,8 @@ typedef struct G233SPIControllerState {
     /*
      * Staging fields for later refinement.
      * You can expand this into FIFOs/timers once you start modelling latency,
-     * burst transfers, or more accurate overrun timing.
+     * burst transfers, more accurate overrun timing, or explicit SPI message
+     * framing for flash commands that require CS deassert between operations.
      */
     uint8_t last_tx;
     uint8_t last_rx;
