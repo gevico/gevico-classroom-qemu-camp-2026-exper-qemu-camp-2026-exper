@@ -29,6 +29,7 @@
 #include "exec/log.h"
 #include "semihosting/semihost.h"
 
+
 #include "internals.h"
 
 #define HELPER_H "helper.h"
@@ -1213,6 +1214,7 @@ static uint32_t opcode_at(DisasContextBase *dcbase, target_ulong pc)
 #include "insn_trans/trans_rvbf16.c.inc"
 #include "decode-xthead.c.inc"
 #include "decode-xmips.c.inc"
+#include "decode-Xg233ai.c.inc"
 #include "insn_trans/trans_xthead.c.inc"
 #include "insn_trans/trans_xventanacondops.c.inc"
 #include "insn_trans/trans_xmips.c.inc"
@@ -1223,7 +1225,7 @@ static uint32_t opcode_at(DisasContextBase *dcbase, target_ulong pc)
 #include "insn_trans/trans_zilsd.c.inc"
 #include "insn_trans/trans_rvzcmop.c.inc"
 #include "insn_trans/trans_rvzicfiss.c.inc"
-
+#include "insn_trans/trans_xg233.c.inc"
 /* Include decoders for factored-out extensions */
 #include "decode-XVentanaCondOps.c.inc"
 
@@ -1231,10 +1233,11 @@ static uint32_t opcode_at(DisasContextBase *dcbase, target_ulong pc)
 #define MAX_INSN_LEN  4
 
 const RISCVDecoder decoder_table[] = {
-    { always_true_p, decode_insn32 },
-    { has_xmips_p, decode_xmips},
-    { has_xthead_p, decode_xthead},
-    { has_XVentanaCondOps_p, decode_XVentanaCodeOps},
+    {always_true_p, decode_insn32},
+    {always_true_p, decode_xg233ai},
+    {has_xmips_p, decode_xmips},
+    {has_xthead_p, decode_xthead},
+    {has_XVentanaCondOps_p, decode_XVentanaCodeOps},
 };
 
 const size_t decoder_table_size = ARRAY_SIZE(decoder_table);

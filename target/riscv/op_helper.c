@@ -781,3 +781,49 @@ done:
 }
 
 #endif /* !CONFIG_USER_ONLY */
+void helper_xg233_dma(CPURISCVState *env, target_ulong dst,
+                      target_ulong src, target_ulong grain)
+{
+    
+    uint32_t n;
+    uintptr_t ra = GETPC(); /* 获取当前指令的返回地址，用于异常定位 */
+
+    // 1. 根据 grain 确定矩阵规模 N
+    switch (grain)
+    {
+    case 0:
+        n = 8;
+        break;
+    case 1:
+        n = 16;
+        break;
+    case 2:
+        n = 32;
+        break;
+    default:
+        // 伪代码定义为“未定义行为”，这里我们选择直接返回或记录
+        return;
+    }
+
+    // 2. 执行转置搬运逻辑
+    for (uint32_t i = 0; i < n; i++)
+    {
+        for (uint32_t j = 0; j < n; j++)
+        {
+            /*
+             * 计算源地址和目标地址的偏移：
+             * 每个元素是 FP32 (4 bytes)
+             * 源地址元素：[i * n + j]
+             * 目标地址元素：[j * n + i] (转置)
+             */
+            target_ulong src_addr = src + (i * n + j) * 4;
+            target_ulong dst_addr = dst + (j * n + i) * 4;
+
+            // 从 Guest 内存读取 FP32 数据
+            uint32_t tmp = cpu_ldl_data_ra(env, src_addr, ra);
+
+            // 写入到转置后的 Guest 内存位置
+            cpu_stl_data_ra(env, dst_addr, tmp, ra);
+        }
+    }
+}
