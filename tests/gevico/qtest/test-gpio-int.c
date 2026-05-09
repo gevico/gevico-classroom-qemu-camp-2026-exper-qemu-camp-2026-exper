@@ -129,12 +129,10 @@ static void test_gpio_ie_mask(void)
 static void test_gpio_plic(void)
 {
     QTestState *qts = qtest_init("-machine g233 -m 2G");
-
     /* PLIC init: enable IRQ 2 at context 0 with non-zero priority */
     qtest_writel(qts, PLIC_PRIORITY + GPIO_PLIC_IRQ * 4, 1);
     qtest_writel(qts, PLIC_THRESHOLD, 0);
     qtest_writel(qts, PLIC_ENABLE, 1u << GPIO_PLIC_IRQ);
-
     qtest_writel(qts, GPIO_DIR,  0x1);
     qtest_writel(qts, GPIO_TRIG, 0x0);
     qtest_writel(qts, GPIO_POL,  0x1);

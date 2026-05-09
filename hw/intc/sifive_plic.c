@@ -356,8 +356,11 @@ static void sifive_plic_irq_request(void *opaque, int irq, int level)
 
     if (level > 0) {
         sifive_plic_set_pending(s, irq, true);
-        sifive_plic_update(s);
+    /* 拉低中断线后，还要手动清除pending位，因为默认pending位是sticky的 */
+    } else {
+        sifive_plic_set_pending(s, irq, false);
     }
+    sifive_plic_update(s);
 }
 
 static void sifive_plic_realize(DeviceState *dev, Error **errp)

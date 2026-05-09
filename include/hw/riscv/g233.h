@@ -90,6 +90,7 @@ enum {
     VIRT_PLATFORM_BUS,
     VIRT_PCIE_ECAM,
     VIRT_IOMMU_SYS,
+    VIRT_GPIO,      /* GPIO controller */
 };
 
 enum {

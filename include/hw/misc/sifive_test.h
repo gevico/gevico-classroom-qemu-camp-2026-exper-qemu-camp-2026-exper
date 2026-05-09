@@ -28,20 +28,22 @@ typedef struct SiFiveTestState SiFiveTestState;
 DECLARE_INSTANCE_CHECKER(SiFiveTestState, SIFIVE_TEST,
                          TYPE_SIFIVE_TEST)
 
+/* 所有挂载在系统总线上的MMIO外设都会继承SysBusDevice类，几乎所有外设都会使用这个 */
+/* 如uart gpio watchdog usb controller virtIO，只要它可以通过MMIO，而不是pci/spi/pcie等总线访问 */
 struct SiFiveTestState {
     /*< private >*/
     SysBusDevice parent_obj;
 
     /*< public >*/
-    MemoryRegion mmio;
+    MemoryRegion mmio;         /* MMIO region */
 };
 
+/* state code */
 enum {
     FINISHER_FAIL = 0x3333,
     FINISHER_PASS = 0x5555,
     FINISHER_RESET = 0x7777
 };
 
-DeviceState *sifive_test_create(hwaddr addr);
-
+DeviceState *sifive_test_create(hwaddr addr);   /* func for initializing test finisher */
 #endif

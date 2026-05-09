@@ -44,6 +44,7 @@
 #include "hw/intc/riscv_aplic.h"
 #include "hw/intc/sifive_plic.h"
 #include "hw/misc/sifive_test.h"
+#include "hw/gpio/g233_gpio.h"
 #include "hw/core/platform-bus.h"
 #include "chardev/char.h"
 #include "system/device_tree.h"
@@ -95,6 +96,7 @@ static const MemMapEntry virt_memmap[] = {
     [VIRT_APLIC_S] =      {  0xd000000, APLIC_SIZE(VIRT_CPUS_MAX) },
     [VIRT_UART0] =        { 0x10000000,         0x100 },
     [VIRT_VIRTIO] =       { 0x10001000,        0x1000 },
+    [VIRT_GPIO] =         { 0x10012000,        0x100 },
     [VIRT_FW_CFG] =       { 0x10100000,          0x18 },
     [VIRT_FLASH] =        { 0x20000000,     0x4000000 },
     [VIRT_IMSIC_M] =      { 0x24000000, VIRT_IMSIC_MAX_SIZE },
@@ -1529,11 +1531,15 @@ static void virt_machine_done(Notifier *notifier, void *data)
 
 }
 
+/* 初始化时由MachineClass的回调机制调用，类似于驱动开发的init函数 */
+/* MachineState是基类，RISCVG233State是具体的子类，MachineState必须是RISCVG233State的第一个成员 */
+/* 外部调用这个接口时经历了：创建时分配子类内存——向上转型为父类指针——接口内部向下转型为子类指针(宏保证类型准确) */
 static void virt_machine_init(MachineState *machine)
 {
     RISCVG233State *s = RISCV_G233_MACHINE(machine);
     MemoryRegion *system_memory = get_system_memory();
     MemoryRegion *mask_rom = g_new(MemoryRegion, 1);
+    /* irqchip是对于每个CPU而言的，而不是对每个核心而言的 */
     DeviceState *mmio_irqchip, *virtio_irqchip, *pcie_irqchip;
     int i, base_hartid, hart_count;
     int socket_count = riscv_socket_count(machine);
@@ -1553,10 +1559,12 @@ static void virt_machine_init(MachineState *machine)
     }
 
     /* Initialize sockets */
+    // socket是物理插槽的抽象，hart是硬件线程，多数情况下可以和一个核心等同
     mmio_irqchip = virtio_irqchip = pcie_irqchip = NULL;
     for (i = 0; i < socket_count; i++) {
         g_autofree char *soc_name = g_strdup_printf("soc%d", i);
 
+        /* 这里主要在检查hart是否合法，包括：socket内的hartid是否连续，baseid是否合法，核心数是否可见 */ 
         if (!riscv_socket_check_hartids(machine, i)) {
             error_report("discontinuous hartids in socket%d", i);
             exit(1);
@@ -1574,6 +1582,7 @@ static void virt_machine_init(MachineState *machine)
             exit(1);
         }
 
+        /* 为每个socket建立hartarray对象 */
         object_initialize_child(OBJECT(machine), soc_name, &s->soc[i],
                                 TYPE_RISCV_HART_ARRAY);
         object_property_set_str(OBJECT(&s->soc[i]), "cpu-type",
@@ -1584,7 +1593,9 @@ static void virt_machine_init(MachineState *machine)
                                 hart_count, &error_abort);
         sysbus_realize(SYS_BUS_DEVICE(&s->soc[i]), &error_fatal);
 
+        /* 这里主要是本地中断和外部中断相关的配置 */
         if (virt_aclint_allowed() && s->have_aclint) {
+            /* IMSIC会接管intra-core中断，因此这里只需要创建mtimer */
             if (s->aia_type == G233_AIA_TYPE_APLIC_IMSIC) {
                 /* Per-socket ACLINT MTIMER */
                 riscv_aclint_mtimer_create(s->memmap[VIRT_CLINT].base +
@@ -1594,11 +1605,12 @@ static void virt_machine_init(MachineState *machine)
                         RISCV_ACLINT_DEFAULT_MTIMECMP,
                         RISCV_ACLINT_DEFAULT_MTIME,
                         RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, true);
+            /* PLIC & clint/aclint */
             } else {
                 /* Per-socket ACLINT MSWI, MTIMER, and SSWI */
                 riscv_aclint_swi_create(s->memmap[VIRT_CLINT].base +
                             i * s->memmap[VIRT_CLINT].size,
-                        base_hartid, hart_count, false);
+                        base_hartid, hart_count, false);   // MSWI
                 riscv_aclint_mtimer_create(s->memmap[VIRT_CLINT].base +
                             i * s->memmap[VIRT_CLINT].size +
                             RISCV_ACLINT_SWI_SIZE,
@@ -1606,12 +1618,12 @@ static void virt_machine_init(MachineState *machine)
                         base_hartid, hart_count,
                         RISCV_ACLINT_DEFAULT_MTIMECMP,
                         RISCV_ACLINT_DEFAULT_MTIME,
-                        RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, true);
+                        RISCV_ACLINT_DEFAULT_TIMEBASE_FREQ, true);  // MTIMER
                 riscv_aclint_swi_create(s->memmap[VIRT_ACLINT_SSWI].base +
                             i * s->memmap[VIRT_ACLINT_SSWI].size,
-                        base_hartid, hart_count, true);
+                        base_hartid, hart_count, true);   // SSWI
             }
-        } else if (tcg_enabled()) {
+        } else if (tcg_enabled()) {    // 纯软件,clint,没有SSWI，只有MSWI
             /* Per-socket SiFive CLINT */
             riscv_aclint_swi_create(
                     s->memmap[VIRT_CLINT].base + i * s->memmap[VIRT_CLINT].size,
@@ -1634,6 +1646,12 @@ static void virt_machine_init(MachineState *machine)
         }
 
         /* Try to use different IRQCHIP instance based device type */
+        /* 
+            如果只有一个CPU，则需要接管所有中断
+            如果有两个，则把部分中断交给其他cpu，提升效率
+            三个的话，就一个cpu接管一种中断 
+            不太清楚为什么有这三个区分
+        */
         if (i == 0) {
             mmio_irqchip = s->irqchip[i];
             virtio_irqchip = s->irqchip[i];
@@ -1647,7 +1665,7 @@ static void virt_machine_init(MachineState *machine)
             pcie_irqchip = s->irqchip[i];
         }
     }
-
+    /* 这里又在干吗 */
     if (kvm_enabled() && g233_use_kvm_aia_aplic_imsic(s->aia_type)) {
         kvm_riscv_aia_create(machine, IMSIC_MMIO_GROUP_MIN_SHIFT,
                              VIRT_IRQCHIP_NUM_SOURCES, VIRT_IRQCHIP_NUM_MSIS,
@@ -1674,6 +1692,8 @@ static void virt_machine_init(MachineState *machine)
             ROUND_UP(virt_high_pcie_memmap.base, virt_high_pcie_memmap.size);
     }
 
+    /* register memory */
+
     /* register system main memory (actual RAM) */
     memory_region_add_subregion(system_memory, s->memmap[VIRT_DRAM].base,
                                 machine->ram);
@@ -1691,8 +1711,17 @@ static void virt_machine_init(MachineState *machine)
     s->fw_cfg = create_fw_cfg(machine, s->memmap[VIRT_FW_CFG].base);
     rom_set_fw(s->fw_cfg);
 
+    /* 注册外设 */
     /* SiFive Test MMIO device */
+    /* 这个是一个模拟出来的外设，叫做test finisher，其只有一个寄存器 */
+    /* 通过写入它的低16位和高16位，可以设置测试状态和错误码 */
+    /* 代码量很少，但是是完整的外设模拟过程，因此可以通过它来学习外设的建模 */
     sifive_test_create(s->memmap[VIRT_TEST].base);
+
+    /* G233 GPIO controller */
+    // sysbus_create_simple(TYPE_G233_GPIO, s->memmap[VIRT_GPIO].base, NULL);
+    sysbus_create_simple(TYPE_G233_GPIO, s->memmap[VIRT_GPIO].base,
+    qdev_get_gpio_in(mmio_irqchip, 2));   // IRQ 2 = GPIO
 
     /* VirtIO MMIO devices */
     for (i = 0; i < VIRTIO_COUNT; i++) {
@@ -1710,10 +1739,10 @@ static void virt_machine_init(MachineState *machine)
     //     serial_hd(0), DEVICE_LITTLE_ENDIAN);
     pl011_create(s->memmap[VIRT_UART0].base,
                  qdev_get_gpio_in(mmio_irqchip, UART0_IRQ),
-                 serial_hd(0));
+                 serial_hd(0));   /* UART0 */
 
     sysbus_create_simple("goldfish_rtc", s->memmap[VIRT_RTC].base,
-        qdev_get_gpio_in(mmio_irqchip, RTC_IRQ));
+        qdev_get_gpio_in(mmio_irqchip, RTC_IRQ));   
 
     for (i = 0; i < ARRAY_SIZE(s->flash); i++) {
         /* Map legacy -drive if=pflash to machine properties */
@@ -1722,6 +1751,7 @@ static void virt_machine_init(MachineState *machine)
     }
     virt_flash_map(s, system_memory);
 
+    /* 设备树和IOMMU */
     /* load/create device tree */
     if (machine->dtb) {
         machine->fdt = load_device_tree(machine->dtb, &s->fdt_size);
@@ -1749,6 +1779,7 @@ static void virt_machine_init(MachineState *machine)
         sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu_sys), &error_fatal);
     }
 
+    /* 注册MachineDone回调，初始化后会调用virt_machine_done */
     s->machine_done.notify = virt_machine_done;
     qemu_add_machine_init_done_notifier(&s->machine_done);
 }

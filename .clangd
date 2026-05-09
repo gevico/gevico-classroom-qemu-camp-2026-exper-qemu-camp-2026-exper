@@ -1,0 +1,7 @@
+CompileFlags:
+  Add:
+    - "-Ibuild"
+    - "-I."
+    - "-Iinclude"
+    - "-include"
+    - "include/qemu/osdep.h"

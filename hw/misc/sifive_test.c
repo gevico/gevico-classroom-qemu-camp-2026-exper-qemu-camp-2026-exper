@@ -27,11 +27,13 @@
 #include "hw/misc/sifive_test.h"
 #include "system/system.h"
 
+/* 这个函数就是用于获取外设状态的，一些状态值通过MMIO暴露给外部读取 */
 static uint64_t sifive_test_read(void *opaque, hwaddr addr, unsigned int size)
 {
     return 0;
 }
 
+/* 这个则是设置寄存器的，也就是配置外设的，某些功能的配置通过MMIO暴露给外部 */
 static void sifive_test_write(void *opaque, hwaddr addr,
            uint64_t val64, unsigned int size)
 {
@@ -58,6 +60,7 @@ static void sifive_test_write(void *opaque, hwaddr addr,
                   __func__, (int)addr, val64);
 }
 
+/* 外设功能结构体，由于是MMIO外设，因此是MemoryRegionOps */
 static const MemoryRegionOps sifive_test_ops = {
     .read = sifive_test_read,
     .write = sifive_test_write,
@@ -68,13 +71,14 @@ static const MemoryRegionOps sifive_test_ops = {
     }
 };
 
+/* 类似probe函数 */
 static void sifive_test_init(Object *obj)
 {
     SiFiveTestState *s = SIFIVE_TEST(obj);
 
     memory_region_init_io(&s->mmio, obj, &sifive_test_ops, s,
-                          TYPE_SIFIVE_TEST, 0x1000);
-    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mmio);
+                          TYPE_SIFIVE_TEST, 0x1000);    /* MMIO region初始化 */
+    sysbus_init_mmio(SYS_BUS_DEVICE(obj), &s->mmio);   /* 总线路由 */
 }
 
 static const TypeInfo sifive_test_info = {
