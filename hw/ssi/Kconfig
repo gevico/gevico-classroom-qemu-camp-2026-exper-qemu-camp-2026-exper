@@ -9,6 +9,12 @@ config SIFIVE_SPI
 config SSI
     bool
 
+config SPI_GPIO
+    bool
+    depends on HAVE_RUST
+    select SSI
+    select X_I2C_RUST
+
 config XILINX_SPI
     bool
     select SSI

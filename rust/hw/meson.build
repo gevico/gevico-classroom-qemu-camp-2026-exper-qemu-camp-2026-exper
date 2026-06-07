@@ -1,3 +1,5 @@
 subdir('char')
+subdir('gevico')
 subdir('i2c')
+subdir('ssi')
 subdir('timer')

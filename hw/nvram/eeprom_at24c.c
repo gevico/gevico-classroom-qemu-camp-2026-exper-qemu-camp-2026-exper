@@ -58,6 +58,16 @@ struct EEPROMState {
     uint32_t init_rom_size;
 };
 
+static uint16_t at24c_page_mask(EEPROMState *ee)
+{
+    /* AT24C02 uses 8-byte page writes; keep legacy linear behavior otherwise. */
+    if (ee->rsize == 256) {
+        return 8 - 1;
+    }
+
+    return 0;
+}
+
 static
 int at24c_eeprom_event(I2CSlave *s, enum i2c_event event)
 {
@@ -113,6 +123,7 @@ static
 int at24c_eeprom_send(I2CSlave *s, uint8_t data)
 {
     EEPROMState *ee = AT24C_EE(s);
+    uint16_t page_mask;
 
     if (ee->haveaddr < ee->asize) {
         ee->cur <<= 8;
@@ -131,7 +142,13 @@ int at24c_eeprom_send(I2CSlave *s, uint8_t data)
         } else {
             DPRINTK("Send error %02x read-only\n", data);
         }
-        ee->cur = (ee->cur + 1u) % ee->rsize;
+
+        page_mask = at24c_page_mask(ee);
+        if (page_mask) {
+            ee->cur = (ee->cur & ~page_mask) | ((ee->cur + 1u) & page_mask);
+        } else {
+            ee->cur = (ee->cur + 1u) % ee->rsize;
+        }
 
     }
 

@@ -1,0 +1,2 @@
+config X_SPI_RUST
+    bool
